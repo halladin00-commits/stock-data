@@ -6,7 +6,7 @@ GitHub Actions에서 매일 자동 실행됩니다.
   t  = ticker (한국: 6자리 숫자, 미국: 영문 심볼)
   n  = name (종목명)
   m  = market (KS=KOSPI, KQ=KOSDAQ, US=미국)
-  ty = type (S=주식, E=ETF)
+  ty = type (S=주식, E=ETF)  ※ 없으면 주식으로 간주
 """
 
 import json
@@ -30,6 +30,18 @@ def _strip_kr_prefix(code: str) -> str:
     if code.startswith("A") and code[1:].isdigit():
         return code[1:]
     return code
+
+
+def _dedup(stocks, key="t"):
+    """중복 제거 (첫 번째 등장 유지)"""
+    seen = set()
+    result = []
+    for s in stocks:
+        k = s[key]
+        if k not in seen:
+            seen.add(k)
+            result.append(s)
+    return result
 
 
 def _fetch_paged(base_url, extra_params=None, label=""):
@@ -75,8 +87,10 @@ def _fetch_paged(base_url, extra_params=None, label=""):
     return items_all
 
 
+# ──────────────────────────────────────────
+#  한국 주식
+# ──────────────────────────────────────────
 def fetch_kr_stocks():
-    """공공데이터포털 - 한국 상장 주식"""
     print("한국 주식 수집 시작...")
     url = "https://apis.data.go.kr/1160100/service/GetKrxListedInfoService/getItemInfo"
     raw = _fetch_paged(url, label="KR주식")
@@ -96,20 +110,15 @@ def fetch_kr_stocks():
         t = _strip_kr_prefix(short_code)
         stocks.append({"t": t, "n": name, "m": m, "ty": "S"})
 
-    # 중복 제거
-    seen = set()
-    unique = []
-    for s in stocks:
-        if s["t"] not in seen:
-            seen.add(s["t"])
-            unique.append(s)
-
-    print(f"한국 주식 수집 완료: {len(unique)}건")
-    return unique
+    stocks = _dedup(stocks)
+    print(f"한국 주식 수집 완료: {len(stocks)}건")
+    return stocks
 
 
+# ──────────────────────────────────────────
+#  한국 ETF
+# ──────────────────────────────────────────
 def fetch_kr_etfs():
-    """공공데이터포털 - 한국 상장 ETF"""
     print("한국 ETF 수집 시작...")
 
     # 방법 1: ETF 전용 엔드포인트
@@ -133,20 +142,16 @@ def fetch_kr_etfs():
         t = _strip_kr_prefix(short_code)
         etfs.append({"t": t, "n": name, "m": "KS", "ty": "E"})
 
-    seen = set()
-    unique = []
-    for s in etfs:
-        if s["t"] not in seen:
-            seen.add(s["t"])
-            unique.append(s)
-
-    print(f"한국 ETF 수집 완료: {len(unique)}건")
-    return unique
+    etfs = _dedup(etfs)
+    print(f"한국 ETF 수집 완료: {len(etfs)}건")
+    return etfs
 
 
+# ──────────────────────────────────────────
+#  미국 주식 (dumbstockapi)
+# ──────────────────────────────────────────
 def fetch_us_stocks():
-    """dumbstockapi - 미국 종목 (주식 + ETF 자동 구분)"""
-    print("미국 종목 수집 시작...")
+    print("미국 주식 수집 시작...")
     stocks = []
 
     try:
@@ -158,42 +163,85 @@ def fetch_us_stocks():
         for item in data:
             ticker = item.get("ticker", "")
             name = item.get("name", "")
-            stock_type = item.get("type", "")
 
             if not ticker or not name:
                 continue
             if any(c in ticker for c in [".", "-", "^", "/"]):
                 continue
 
-            ty = "E" if stock_type == "ETF" else "S"
-            stocks.append({"t": ticker, "n": name.strip(), "m": "US", "ty": ty})
+            stocks.append({"t": ticker, "n": name.strip(), "m": "US", "ty": "S"})
 
-        etf_count = sum(1 for s in stocks if s["ty"] == "E")
-        print(f"미국 종목 수집 완료: {len(stocks)}건 (주식 {len(stocks)-etf_count} + ETF {etf_count})")
-
+        print(f"미국 주식 수집 완료: {len(stocks)}건")
     except Exception as e:
-        print(f"미국 종목 수집 실패: {e}")
+        print(f"미국 주식 수집 실패: {e}")
 
     return stocks
 
 
+# ──────────────────────────────────────────
+#  미국 ETF (NASDAQ ETF screener)
+# ──────────────────────────────────────────
+def fetch_us_etfs():
+    print("미국 ETF 수집 시작...")
+    etfs = []
+
+    try:
+        url = "https://api.nasdaq.com/api/screener/etf?tableonly=true&download=true"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        resp = requests.get(url, headers=headers, timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+
+        rows = data.get("data", {}).get("data", {}).get("rows", [])
+        print(f"  NASDAQ ETF screener: {len(rows)}건")
+
+        for row in rows:
+            symbol = (row.get("symbol") or "").strip()
+            name = (row.get("companyName") or "").strip()
+
+            if not symbol or not name:
+                continue
+            if any(c in symbol for c in [".", "-", "^", "/"]):
+                continue
+
+            etfs.append({"t": symbol, "n": name, "m": "US", "ty": "E"})
+
+        etfs = _dedup(etfs)
+        print(f"미국 ETF 수집 완료: {len(etfs)}건")
+
+    except Exception as e:
+        print(f"미국 ETF 수집 실패: {e}")
+
+    return etfs
+
+
+# ──────────────────────────────────────────
+#  메인
+# ──────────────────────────────────────────
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     kr_stocks = fetch_kr_stocks()
     kr_etfs = fetch_kr_etfs()
     us_stocks = fetch_us_stocks()
+    us_etfs = fetch_us_etfs()
 
-    # KR 주식에서 ETF와 중복되는 항목 제거
+    # KR: 주식에서 ETF와 겹치는 항목 제거
     kr_etf_tickers = {e["t"] for e in kr_etfs}
     kr_stocks_dedup = [s for s in kr_stocks if s["t"] not in kr_etf_tickers]
 
-    all_stocks = kr_stocks_dedup + kr_etfs + us_stocks
-    etf_total = len(kr_etfs) + sum(1 for s in us_stocks if s["ty"] == "E")
+    # US: 주식에서 ETF와 겹치는 항목 제거
+    us_etf_tickers = {e["t"] for e in us_etfs}
+    us_stocks_dedup = [s for s in us_stocks if s["t"] not in us_etf_tickers]
+
+    all_stocks = kr_stocks_dedup + kr_etfs + us_stocks_dedup + us_etfs
+    etf_total = len(kr_etfs) + len(us_etfs)
 
     print(f"\n전체: {len(all_stocks)}건")
     print(f"  KR: {len(kr_stocks_dedup) + len(kr_etfs)} (주식 {len(kr_stocks_dedup)} + ETF {len(kr_etfs)})")
-    print(f"  US: {len(us_stocks)}")
+    print(f"  US: {len(us_stocks_dedup) + len(us_etfs)} (주식 {len(us_stocks_dedup)} + ETF {len(us_etfs)})")
     print(f"  ETF 합계: {etf_total}")
 
     if len(all_stocks) == 0:
@@ -210,7 +258,8 @@ def main():
         "updated_at": datetime.utcnow().isoformat() + "Z",
         "kr_stock_count": len(kr_stocks_dedup),
         "kr_etf_count": len(kr_etfs),
-        "us_count": len(us_stocks),
+        "us_stock_count": len(us_stocks_dedup),
+        "us_etf_count": len(us_etfs),
         "etf_count": etf_total,
         "total_count": len(all_stocks),
         "file_size": file_size,
@@ -221,15 +270,17 @@ def main():
 
     index_path = os.path.join(OUTPUT_DIR, "index.html")
     with open(index_path, "w") as f:
-        f.write(f"<html><body><h1>Stock Data v2</h1>"
-                f"<p>Updated: {meta['updated_at']}</p>"
-                f"<p>Total: {meta['total_count']}"
-                f" (KR Stock: {meta['kr_stock_count']}"
-                f", KR ETF: {meta['kr_etf_count']}"
-                f", US: {meta['us_count']})</p>"
-                f"<p>ETF Total: {meta['etf_count']}</p>"
-                f"<p><a href='stocks.json'>stocks.json</a> ({file_size/1024:.0f}KB)</p>"
-                f"</body></html>")
+        f.write(
+            f"<html><body><h1>Stock Data v2</h1>"
+            f"<p>Updated: {meta['updated_at']}</p>"
+            f"<p>Total: {meta['total_count']}"
+            f" (KR Stock: {meta['kr_stock_count']}"
+            f", KR ETF: {meta['kr_etf_count']}"
+            f", US Stock: {meta['us_stock_count']}"
+            f", US ETF: {meta['us_etf_count']})</p>"
+            f"<p><a href='stocks.json'>stocks.json</a> ({file_size/1024:.0f}KB)</p>"
+            f"</body></html>"
+        )
 
     print("완료!")
 
