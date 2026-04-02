@@ -1,10 +1,10 @@
 {
-  "updated_at": "2026-04-02T13:03:18.700035Z",
-  "kr_stock_count": 2649,
-  "kr_etf_count": 11,
+  "updated_at": "2026-04-02T13:17:18.637503Z",
+  "kr_stock_count": 2660,
+  "kr_etf_count": 0,
   "us_stock_count": 5808,
   "us_etf_count": 4399,
-  "etf_count": 4410,
+  "etf_count": 4399,
   "total_count": 12867,
   "file_size": 858917,
   "version": 2
