@@ -1,8 +1,14 @@
 """
-한국/미국 상장 종목 + ETF 리스트를 수집하여 JSON 파일로 생성하는 스크립트.
+한국/미국 상장 종목 리스트를 수집하여 JSON 파일로 생성하는 스크립트.
 GitHub Actions에서 매일 자동 실행됩니다.
 
-필드: t=ticker, n=name, m=market(KS/KQ/US), ty=type(S/E)
+4개 소스:
+  1. 공공데이터포털 getItemInfo       → 한국 주식
+  2. 공공데이터포털 getETFPriceInfo   → 한국 ETF
+  3. dumbstockapi                     → 미국 주식
+  4. NASDAQ ETF screener              → 미국 ETF
+
+필드: t=ticker, n=name, m=market(KS/KQ/US)
 """
 
 import json
@@ -16,11 +22,12 @@ META_FILE = os.path.join(OUTPUT_DIR, "meta.json")
 
 DATA_GO_KR_API_KEY = os.environ.get("DATA_GO_KR_API_KEY", "")
 
-MAX_PAGES = 20
-PER_PAGE = 500
+MAX_PAGES = 50   # getItemInfo의 totalCount가 매우 크므로 여유 있게
+PER_PAGE = 1000  # 한 번에 더 많이 받기
 
 
 def _strip_kr_prefix(code: str) -> str:
+    """한국 종목코드에서 'A' 접두사 제거"""
     code = code.strip()
     if code.startswith("A") and code[1:].isdigit():
         return code[1:]
@@ -28,6 +35,7 @@ def _strip_kr_prefix(code: str) -> str:
 
 
 def _dedup(stocks, key="t"):
+    """중복 제거 (첫 번째 등장 유지)"""
     seen = set()
     result = []
     for s in stocks:
@@ -38,19 +46,12 @@ def _dedup(stocks, key="t"):
     return result
 
 
-# ──────────────────────────────────────────
-#  한국 주식 (공공데이터포털 getItemInfo)
-# ──────────────────────────────────────────
-def fetch_kr_stocks():
-    print("한국 주식 수집 시작...")
-    stocks = []
-    found_markets = set()
-
+def _fetch_datago_paged(base_url, extra_params=None, label=""):
+    """공공데이터포털 페이징 공통 로직"""
+    all_items = []
     if not DATA_GO_KR_API_KEY:
-        print("  DATA_GO_KR_API_KEY 미설정. 건너뜁니다.")
-        return stocks
-
-    base_url = "https://apis.data.go.kr/1160100/service/GetKrxListedInfoService/getItemInfo"
+        print(f"  DATA_GO_KR_API_KEY 미설정. {label} 건너뜁니다.")
+        return all_items
 
     for page in range(1, MAX_PAGES + 1):
         params = {
@@ -59,10 +60,14 @@ def fetch_kr_stocks():
             "numOfRows": PER_PAGE,
             "pageNo": page,
         }
+        if extra_params:
+            params.update(extra_params)
+
         try:
             resp = requests.get(base_url, params=params, timeout=30)
             resp.raise_for_status()
             data = resp.json()
+
             body = data.get("response", {}).get("body", {})
             items = body.get("items", {}).get("item", [])
             total_count = int(body.get("totalCount", 0))
@@ -72,214 +77,89 @@ def fetch_kr_stocks():
             if not items:
                 break
 
-            for item in items:
-                short_code = item.get("srtnCd", "")
-                name = item.get("itmsNm", "")
-                market = item.get("mrktCtg", "")
-                found_markets.add(market)
+            all_items.extend(items)
+            print(f"  {label} 페이지 {page}: {len(items)}건 (누적 {len(all_items)}/{total_count})")
 
-                if not short_code or not name:
-                    continue
-                if market == "KONEX":
-                    continue
-
-                m = "KS" if market == "KOSPI" else "KQ"
-                t = _strip_kr_prefix(short_code)
-                stocks.append({"t": t, "n": name, "m": m, "ty": "S"})
-
-            print(f"  페이지 {page}: {len(items)}건 (누적 {len(stocks)}/{total_count})")
-            if len(stocks) >= total_count or len(items) < PER_PAGE:
+            if len(all_items) >= total_count or len(items) < PER_PAGE:
                 break
         except Exception as e:
-            print(f"  페이지 {page} 실패: {e}")
+            print(f"  {label} 페이지 {page} 실패: {e}")
             break
 
+    return all_items
+
+
+# ──────────────────────────────────────────
+#  1. 한국 주식 (공공데이터포털 getItemInfo)
+# ──────────────────────────────────────────
+def fetch_kr_stocks():
+    print("1. 한국 주식 수집 시작...")
+    url = "https://apis.data.go.kr/1160100/service/GetKrxListedInfoService/getItemInfo"
+    raw = _fetch_datago_paged(url, label="KR주식")
+
+    stocks = []
+    for item in raw:
+        code = item.get("srtnCd", "")
+        name = item.get("itmsNm", "")
+        market = item.get("mrktCtg", "")
+
+        if not code or not name:
+            continue
+        if market == "KONEX":
+            continue
+
+        m = "KS" if market == "KOSPI" else "KQ"
+        t = _strip_kr_prefix(code)
+        stocks.append({"t": t, "n": name, "m": m})
+
     stocks = _dedup(stocks)
-    print(f"한국 주식 수집 완료: {len(stocks)}건")
-    print(f"  발견된 mrktCtg 값: {found_markets}")
+    print(f"   한국 주식 완료: {len(stocks)}건")
     return stocks
 
 
 # ──────────────────────────────────────────
-#  한국 ETF (여러 소스 시도)
+#  2. 한국 ETF (공공데이터포털 getETFPriceInfo)
 # ──────────────────────────────────────────
 def fetch_kr_etfs():
-    print("한국 ETF 수집 시작...")
+    print("2. 한국 ETF 수집 시작...")
 
-    # 방법 1: KRX JSON API
-    etfs = _try_krx_etfs()
-    if len(etfs) >= 100:
-        return etfs
+    # 최근 영업일 찾기: 오늘부터 7일 전까지 시도
+    for days_ago in range(0, 8):
+        dt = datetime.utcnow() + timedelta(hours=9) - timedelta(days=days_ago)
+        bas_dt = dt.strftime("%Y%m%d")
 
-    # 방법 2: 공공데이터포털 getETFItemInfo → getItemInfo diff
-    print("  KRX 실패. 공공데이터포털 diff 방식 시도...")
-    etfs = _try_datago_diff()
-    if len(etfs) >= 100:
-        return etfs
+        url = "https://apis.data.go.kr/1160100/service/GetSecuritiesProductInfoService/getETFPriceInfo"
+        raw = _fetch_datago_paged(url, extra_params={"basDt": bas_dt}, label=f"KR-ETF({bas_dt})")
 
-    print(f"  ⚠ 한국 ETF {len(etfs)}건만 수집됨 (정상: 700+)")
-    return etfs
-
-
-def _try_krx_etfs():
-    """KRX 한국거래소에서 ETF 전종목 가져오기"""
-    print("  KRX ETF 시도...")
-    etfs = []
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Referer": "http://data.krx.co.kr/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201020101",
-    }
-
-    # 최근 영업일 계산 (오늘부터 7일 이내)
-    for days_ago in range(0, 7):
-        trd_date = (datetime.utcnow() - timedelta(days=days_ago)).strftime("%Y%m%d")
-
-        try:
-            # OTP 생성
-            otp_url = "http://data.krx.co.kr/comm/fileDn/GenerateOTP/generate.cmd"
-            otp_data = {
-                "locale": "ko_KR",
-                "mktId": "ETF",
-                "trdDd": trd_date,
-                "share": "1",
-                "money": "1",
-                "csvxls_isNo": "false",
-                "name": "fileDown",
-                "url": "dbms/MDC/STAT/standard/MDCSTAT04301",
-            }
-            otp_resp = requests.post(otp_url, data=otp_data, headers=headers, timeout=10)
-            otp = otp_resp.text.strip()
-
-            if otp.startswith("<") or len(otp) < 10:
-                print(f"    {trd_date}: OTP 실패")
-                continue
-
-            # CSV 다운로드
-            down_url = "http://data.krx.co.kr/comm/fileDn/download_csv/download.cmd"
-            csv_resp = requests.post(down_url, data={"code": otp}, headers=headers, timeout=30)
-
-            if csv_resp.status_code != 200:
-                continue
-
-            text = csv_resp.content.decode("euc-kr", errors="replace")
-            lines = text.strip().split("\n")
-
-            if len(lines) < 10:
-                print(f"    {trd_date}: 데이터 부족 ({len(lines)}줄)")
-                continue
-
-            # CSV 파싱 (첫줄 = 헤더)
-            header = lines[0].split(",")
-            # 종목코드, 종목명 컬럼 찾기
-            code_idx = None
-            name_idx = None
-            for i, h in enumerate(header):
-                h = h.strip().strip('"')
-                if "종목코드" in h or "단축코드" in h:
-                    code_idx = i
-                if "종목명" in h:
-                    name_idx = i
-
-            if code_idx is None or name_idx is None:
-                print(f"    {trd_date}: 컬럼 못 찾음. 헤더: {header[:5]}")
-                continue
-
-            for line in lines[1:]:
-                cols = line.split(",")
-                if len(cols) <= max(code_idx, name_idx):
-                    continue
-                code = cols[code_idx].strip().strip('"')
-                name = cols[name_idx].strip().strip('"')
-                if code and name:
-                    etfs.append({"t": code, "n": name, "m": "KS", "ty": "E"})
-
-            etfs = _dedup(etfs)
-            print(f"    {trd_date}: KRX ETF {len(etfs)}건 수집")
+        if len(raw) >= 100:
+            print(f"   기준일 {bas_dt} 사용")
             break
+        elif len(raw) > 0:
+            print(f"   {bas_dt}: {len(raw)}건 (너무 적음, 이전 날짜 시도)")
+        else:
+            print(f"   {bas_dt}: 0건 (휴일?, 이전 날짜 시도)")
 
-        except Exception as e:
-            print(f"    {trd_date}: {e}")
+    etfs = []
+    for item in raw:
+        code = item.get("srtnCd", "")
+        name = item.get("itmsNm", "")
+
+        if not code or not name:
             continue
 
-    return etfs
-
-
-def _try_datago_diff():
-    """공공데이터포털 getETFItemInfo 호출 → getItemInfo와 diff"""
-    if not DATA_GO_KR_API_KEY:
-        return []
-
-    # getETFItemInfo 호출
-    print("  getETFItemInfo 호출...")
-    etf_items = []
-    base_url = "https://apis.data.go.kr/1160100/service/GetKrxListedInfoService/getETFItemInfo"
-
-    for page in range(1, MAX_PAGES + 1):
-        params = {
-            "serviceKey": DATA_GO_KR_API_KEY,
-            "resultType": "json",
-            "numOfRows": PER_PAGE,
-            "pageNo": page,
-        }
-        try:
-            resp = requests.get(base_url, params=params, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-            body = data.get("response", {}).get("body", {})
-            items = body.get("items", {}).get("item", [])
-            total_count = int(body.get("totalCount", 0))
-
-            if isinstance(items, dict):
-                items = [items]
-            if not items:
-                break
-
-            for item in items:
-                short_code = item.get("srtnCd", "")
-                name = item.get("itmsNm", "")
-                if short_code and name:
-                    t = _strip_kr_prefix(short_code)
-                    etf_items.append({"t": t, "n": name})
-
-            print(f"    페이지 {page}: {len(items)}건 (누적 {len(etf_items)}/{total_count})")
-            if len(etf_items) >= total_count or len(items) < PER_PAGE:
-                break
-        except Exception as e:
-            print(f"    페이지 {page} 실패: {e}")
-            break
-
-    if not etf_items:
-        return []
-
-    # getItemInfo 티커 목록 로드 (이미 수집된 주식 목록 파일 활용)
-    stock_tickers = set()
-    try:
-        if os.path.exists(OUTPUT_FILE):
-            with open(OUTPUT_FILE) as f:
-                existing = json.load(f)
-            stock_tickers = {
-                s["t"] for s in existing if s.get("m") in ("KS", "KQ") and s.get("ty") == "S"
-            }
-    except:
-        pass
-
-    # diff: ETFItemInfo에 있지만 주식에 없는 항목 = ETF
-    etfs = []
-    for item in etf_items:
-        if item["t"] not in stock_tickers:
-            etfs.append({"t": item["t"], "n": item["n"], "m": "KS", "ty": "E"})
+        t = _strip_kr_prefix(code)
+        etfs.append({"t": t, "n": name, "m": "KS"})
 
     etfs = _dedup(etfs)
-    print(f"  diff 방식 결과: ETFItemInfo {len(etf_items)}건 - 주식 {len(stock_tickers)}건 = ETF {len(etfs)}건")
+    print(f"   한국 ETF 완료: {len(etfs)}건")
     return etfs
 
 
 # ──────────────────────────────────────────
-#  미국 주식 (dumbstockapi)
+#  3. 미국 주식 (dumbstockapi)
 # ──────────────────────────────────────────
 def fetch_us_stocks():
-    print("미국 주식 수집 시작...")
+    print("3. 미국 주식 수집 시작...")
     stocks = []
     try:
         url = "https://dumbstockapi.com/stock?exchanges=NYSE,NASDAQ&format=json"
@@ -292,18 +172,18 @@ def fetch_us_stocks():
                 continue
             if any(c in ticker for c in [".", "-", "^", "/"]):
                 continue
-            stocks.append({"t": ticker, "n": name.strip(), "m": "US", "ty": "S"})
-        print(f"미국 주식 수집 완료: {len(stocks)}건")
+            stocks.append({"t": ticker, "n": name.strip(), "m": "US"})
+        print(f"   미국 주식 완료: {len(stocks)}건")
     except Exception as e:
-        print(f"미국 주식 수집 실패: {e}")
+        print(f"   미국 주식 실패: {e}")
     return stocks
 
 
 # ──────────────────────────────────────────
-#  미국 ETF (NASDAQ screener)
+#  4. 미국 ETF (NASDAQ ETF screener)
 # ──────────────────────────────────────────
 def fetch_us_etfs():
-    print("미국 ETF 수집 시작...")
+    print("4. 미국 ETF 수집 시작...")
     etfs = []
     try:
         url = "https://api.nasdaq.com/api/screener/etf?tableonly=true&download=true"
@@ -318,11 +198,11 @@ def fetch_us_etfs():
                 continue
             if any(c in symbol for c in [".", "-", "^", "/"]):
                 continue
-            etfs.append({"t": symbol, "n": name, "m": "US", "ty": "E"})
+            etfs.append({"t": symbol, "n": name, "m": "US"})
         etfs = _dedup(etfs)
-        print(f"미국 ETF 수집 완료: {len(etfs)}건")
+        print(f"   미국 ETF 완료: {len(etfs)}건")
     except Exception as e:
-        print(f"미국 ETF 수집 실패: {e}")
+        print(f"   미국 ETF 실패: {e}")
     return etfs
 
 
@@ -332,42 +212,29 @@ def fetch_us_etfs():
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    # 1) 한국 주식 먼저 수집 + 저장 (diff용)
     kr_stocks = fetch_kr_stocks()
-
-    # 임시 저장 (diff 방식에서 참조)
-    temp_data = kr_stocks[:]
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        json.dump(temp_data, f, ensure_ascii=False, separators=(",", ":"))
-
-    # 2) 한국 ETF
     kr_etfs = fetch_kr_etfs()
-
-    # 3) 미국
     us_stocks = fetch_us_stocks()
     us_etfs = fetch_us_etfs()
 
-    # US 중복 제거 (ETF와 주식 겹침)
-    us_etf_tickers = {e["t"] for e in us_etfs}
-    us_stocks_dedup = [s for s in us_stocks if s["t"] not in us_etf_tickers]
-
-    all_stocks = kr_stocks + kr_etfs + us_stocks_dedup + us_etfs
-    etf_total = len(kr_etfs) + len(us_etfs)
+    # 합치기 + 전체 중복 제거
+    all_data = kr_stocks + kr_etfs + us_stocks + us_etfs
+    all_data = _dedup(all_data)
 
     print(f"\n{'='*50}")
-    print(f"전체: {len(all_stocks)}건")
-    print(f"  KR 주식: {len(kr_stocks)}")
-    print(f"  KR ETF:  {len(kr_etfs)} {'⚠ 부족!' if len(kr_etfs) < 100 else '✓'}")
-    print(f"  US 주식: {len(us_stocks_dedup)}")
-    print(f"  US ETF:  {len(us_etfs)} {'⚠ 부족!' if len(us_etfs) < 100 else '✓'}")
+    print(f"전체: {len(all_data)}건")
+    print(f"  KR 주식: {len(kr_stocks)}  {'✓' if len(kr_stocks) > 2000 else '⚠ 부족!'}")
+    print(f"  KR ETF:  {len(kr_etfs)}  {'✓' if len(kr_etfs) >= 100 else '⚠ 부족!'}")
+    print(f"  US 주식: {len(us_stocks)}  {'✓' if len(us_stocks) > 3000 else '⚠ 부족!'}")
+    print(f"  US ETF:  {len(us_etfs)}  {'✓' if len(us_etfs) >= 100 else '⚠ 부족!'}")
     print(f"{'='*50}")
 
-    if len(all_stocks) == 0:
+    if len(all_data) == 0:
         print("데이터가 없습니다. 파일을 생성하지 않습니다.")
         return
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        json.dump(all_stocks, f, ensure_ascii=False, separators=(",", ":"))
+        json.dump(all_data, f, ensure_ascii=False, separators=(",", ":"))
 
     file_size = os.path.getsize(OUTPUT_FILE)
 
@@ -375,12 +242,10 @@ def main():
         "updated_at": datetime.utcnow().isoformat() + "Z",
         "kr_stock_count": len(kr_stocks),
         "kr_etf_count": len(kr_etfs),
-        "us_stock_count": len(us_stocks_dedup),
+        "us_stock_count": len(us_stocks),
         "us_etf_count": len(us_etfs),
-        "etf_count": etf_total,
-        "total_count": len(all_stocks),
+        "total_count": len(all_data),
         "file_size": file_size,
-        "version": 2,
     }
     with open(META_FILE, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
@@ -388,10 +253,10 @@ def main():
     index_path = os.path.join(OUTPUT_DIR, "index.html")
     with open(index_path, "w") as f:
         f.write(
-            f"<html><body><h1>Stock Data v2</h1>"
+            f"<html><body><h1>Stock Data</h1>"
             f"<p>Updated: {meta['updated_at']}</p>"
-            f"<p>KR Stock: {meta['kr_stock_count']}, KR ETF: {meta['kr_etf_count']}</p>"
-            f"<p>US Stock: {meta['us_stock_count']}, US ETF: {meta['us_etf_count']}</p>"
+            f"<p>KR: {meta['kr_stock_count']} + ETF {meta['kr_etf_count']}</p>"
+            f"<p>US: {meta['us_stock_count']} + ETF {meta['us_etf_count']}</p>"
             f"<p>Total: {meta['total_count']}</p>"
             f"<p><a href='stocks.json'>stocks.json</a> ({file_size/1024:.0f}KB)</p>"
             f"</body></html>"
