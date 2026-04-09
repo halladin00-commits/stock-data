@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>개인정보처리방침 – Rebalancing</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      line-height: 1.7;
+      padding: 0 16px 60px;
+    }
+    .container { max-width: 720px; margin: 0 auto; }
+    header {
+      padding: 40px 0 24px;
+      border-bottom: 1px solid #334155;
+      margin-bottom: 32px;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .logo-ring {
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      border: 4px solid transparent;
+      border-image: conic-gradient(#3b82f6, #22c55e, #f59e0b, #ef4444, #3b82f6) 1;
+      border-radius: 50%;
+      background:
+        conic-gradient(#3b82f6 0deg, #22c55e 90deg, #f59e0b 180deg, #ef4444 270deg, #3b82f6 360deg)
+        border-box;
+      -webkit-mask: radial-gradient(circle at center, transparent 55%, black 56%);
+      mask: radial-gradient(circle at center, transparent 55%, black 56%);
+    }
+    .logo-text { font-size: 18px; font-weight: 700; letter-spacing: 0.08em; color: #f1f5f9; }
+    h1 { font-size: 22px; font-weight: 700; color: #f1f5f9; }
+    .subtitle { font-size: 13px; color: #64748b; margin-top: 6px; }
+    .lang-toggle {
+      margin-top: 16px;
+      display: flex; gap: 8px;
+    }
+    .lang-btn {
+      padding: 5px 14px;
+      border-radius: 20px;
+      border: 1px solid #334155;
+      background: transparent;
+      color: #94a3b8;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .lang-btn.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+    section { margin-bottom: 28px; }
+    h2 {
+      font-size: 13px;
+      font-weight: 700;
+      color: #3b82f6;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #1e293b;
+    }
+    p { font-size: 14px; color: #94a3b8; margin-bottom: 10px; }
+    ul { padding-left: 18px; }
+    li { font-size: 14px; color: #94a3b8; margin-bottom: 4px; }
+    .contact-box {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 16px 20px;
+    }
+    .contact-box p { margin: 0; }
+    footer {
+      margin-top: 48px;
+      padding-top: 24px;
+      border-top: 1px solid #1e293b;
+      font-size: 12px;
+      color: #475569;
+      text-align: center;
+    }
+    [lang-section="en"] { display: none; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="logo">
+      <div class="logo-ring"></div>
+      <span class="logo-text">REBALANCING</span>
+    </div>
+    <h1 id="page-title">개인정보처리방침</h1>
+    <p class="subtitle" id="page-subtitle">최종 수정일: 2026년 4월 9일</p>
+    <div class="lang-toggle">
+      <button class="lang-btn active" onclick="setLang('ko')">한국어</button>
+      <button class="lang-btn" onclick="setLang('en')">English</button>
+    </div>
+  </header>
+
+  <!-- ===== 한국어 ===== -->
+  <div lang-section="ko">
+
+    <section>
+      <h2>1. 개요</h2>
+      <p>Rebalancing 앱(이하 "앱")은 개인 투자자의 포트폴리오 리밸런싱 계산을 돕는 참고용 도구입니다. 본 방침은 앱이 수집하는 정보와 그 활용 방식을 안내합니다.</p>
+    </section>
+
+    <section>
+      <h2>2. 수집하는 정보</h2>
+      <p>앱은 다음 정보를 수집하거나 처리할 수 있습니다.</p>
+      <ul>
+        <li><strong>광고 관련 데이터:</strong> Google AdMob을 통해 기기 식별자(광고 ID), 대략적 위치, 광고 상호작용 데이터가 수집될 수 있습니다.</li>
+        <li><strong>앱 내 입력 데이터:</strong> 포트폴리오 이름, 종목명, 목표 비중, 보유 수량 등 사용자가 직접 입력하는 데이터는 기기 내부에만 저장되며 외부 서버로 전송되지 않습니다.</li>
+        <li><strong>외부 API 요청:</strong> 실시간 주가 및 환율 조회를 위해 Yahoo Finance, 공개 환율 API, 한국 공공데이터포털 API에 요청을 보냅니다. 이 과정에서 기기 IP 주소가 해당 서비스에 노출될 수 있습니다.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>3. 정보 이용 목적</h2>
+      <ul>
+        <li>앱 기능 제공 (리밸런싱 계산, 주가·환율 조회)</li>
+        <li>Google AdMob을 통한 맞춤형 광고 게재</li>
+        <li>앱 안정성 및 성능 개선</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>4. 제3자 서비스</h2>
+      <p>앱은 다음 외부 서비스를 사용합니다. 각 서비스의 개인정보처리방침을 확인하시기 바랍니다.</p>
+      <ul>
+        <li>Google AdMob — <a href="https://policies.google.com/privacy" style="color:#3b82f6">Google 개인정보처리방침</a></li>
+        <li>Yahoo Finance API</li>
+        <li>한국 공공데이터포털 API</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>5. 국외 데이터 이전</h2>
+      <p>광고 서비스(Google AdMob) 이용 과정에서 일부 데이터가 대한민국 외부(미국 등)의 Google 서버로 전송될 수 있습니다. Google은 적절한 개인정보 보호 조치를 취하고 있습니다.</p>
+    </section>
+
+    <section>
+      <h2>6. 데이터 보유 및 삭제</h2>
+      <p>앱 내 포트폴리오 데이터는 기기에만 저장됩니다. 앱을 삭제하면 모든 데이터가 즉시 삭제됩니다. 광고 관련 데이터 보유 기간은 Google AdMob 정책을 따릅니다.</p>
+    </section>
+
+    <section>
+      <h2>7. 아동 개인정보 보호</h2>
+      <p>앱은 만 14세 미만 아동을 대상으로 하지 않으며, 해당 연령의 개인정보를 의도적으로 수집하지 않습니다.</p>
+    </section>
+
+    <section>
+      <h2>8. 정보주체의 권리</h2>
+      <p>사용자는 언제든지 아래 연락처를 통해 개인정보 열람, 정정, 삭제, 처리 정지를 요청할 수 있습니다.</p>
+    </section>
+
+    <section>
+      <h2>9. 문의</h2>
+      <div class="contact-box">
+        <p>앱 내 데이터 관련 문의는 아래로 연락해 주세요.</p>
+        <p style="margin-top:8px; color:#3b82f6;">halladin00.commits@gmail.com</p>
+      </div>
+    </section>
+
+  </div><!-- /ko -->
+
+  <!-- ===== English ===== -->
+  <div lang-section="en">
+
+    <section>
+      <h2>1. Overview</h2>
+      <p>The Rebalancing app is a reference tool to help individual investors calculate portfolio rebalancing. This policy explains what information the app collects and how it is used.</p>
+    </section>
+
+    <section>
+      <h2>2. Information We Collect</h2>
+      <p>The app may collect or process the following:</p>
+      <ul>
+        <li><strong>Advertising data:</strong> Google AdMob may collect device identifiers (advertising ID), approximate location, and ad interaction data.</li>
+        <li><strong>User-entered data:</strong> Portfolio names, ticker symbols, target weights, and holdings are stored only on your device and are never sent to external servers.</li>
+        <li><strong>External API requests:</strong> The app sends requests to Yahoo Finance, a public exchange-rate API, and the Korea Public Data Portal to fetch real-time prices and rates. Your device IP may be exposed to those services.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>3. How We Use Information</h2>
+      <ul>
+        <li>Providing app functionality (rebalancing calculations, price/rate lookups)</li>
+        <li>Serving personalized ads via Google AdMob</li>
+        <li>Improving app stability and performance</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>4. Third-Party Services</h2>
+      <p>The app uses the following external services. Please review their privacy policies:</p>
+      <ul>
+        <li>Google AdMob — <a href="https://policies.google.com/privacy" style="color:#3b82f6">Google Privacy Policy</a></li>
+        <li>Yahoo Finance API</li>
+        <li>Korea Public Data Portal API</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>5. International Data Transfers</h2>
+      <p>Data may be transferred to Google servers outside South Korea (e.g., the United States) as part of the ad service. Google maintains appropriate data protection measures.</p>
+    </section>
+
+    <section>
+      <h2>6. Data Retention & Deletion</h2>
+      <p>Portfolio data is stored only on your device. Uninstalling the app deletes all data immediately. Ad-related data retention follows Google AdMob's policy.</p>
+    </section>
+
+    <section>
+      <h2>7. Children's Privacy</h2>
+      <p>The app is not directed at children under 14 and does not knowingly collect personal information from them.</p>
+    </section>
+
+    <section>
+      <h2>8. Your Rights</h2>
+      <p>You may request access, correction, deletion, or restriction of your personal data at any time by contacting us below.</p>
+    </section>
+
+    <section>
+      <h2>9. Contact</h2>
+      <div class="contact-box">
+        <p>For any data-related inquiries, please reach out:</p>
+        <p style="margin-top:8px; color:#3b82f6;">halladin00.commits@gmail.com</p>
+      </div>
+    </section>
+
+  </div><!-- /en -->
+
+  <footer>
+    <p>© 2026 Rebalancing. All rights reserved.</p>
+  </footer>
+
+</div>
+
+<script>
+function setLang(lang) {
+  document.querySelectorAll('[lang-section]').forEach(el => {
+    el.style.display = el.getAttribute('lang-section') === lang ? 'block' : 'none';
+  });
+  document.querySelectorAll('.lang-btn').forEach(btn => btn.classList.remove('active'));
+  event.target.classList.add('active');
+  if (lang === 'ko') {
+    document.getElementById('page-title').textContent = '개인정보처리방침';
+    document.getElementById('page-subtitle').textContent = '최종 수정일: 2026년 4월 9일';
+  } else {
+    document.getElementById('page-title').textContent = 'Privacy Policy';
+    document.getElementById('page-subtitle').textContent = 'Last updated: April 9, 2026';
+  }
+}
+</script>
+</body>
+</html>
