@@ -1,2 +1,2 @@
 requests>=2.31.0
-pykrx>=1.0.45
+finance-datareader>=0.9.50

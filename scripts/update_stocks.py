@@ -3,8 +3,8 @@
 GitHub Actions에서 매일 자동 실행됩니다.
 
 4개 소스:
-  1. pykrx (KRX 직접 조회)  → 한국 주식 (우선주 포함)
-  2. pykrx (KRX ETF 목록)   → 한국 ETF
+  1. FinanceDataReader       → 한국 주식 (우선주 포함)
+  2. FinanceDataReader       → 한국 ETF
   3. dumbstockapi            → 미국 주식
   4. NASDAQ ETF screener     → 미국 ETF
 
@@ -34,54 +34,90 @@ def _dedup(stocks, key="t"):
 
 
 # ──────────────────────────────────────────
-#  1. 한국 주식 (pykrx — KRX 직접, 우선주 포함)
+#  공통: FinanceDataReader DataFrame → 종목 리스트
+# ──────────────────────────────────────────
+def _fdr_df_to_stocks(df, m_code, ty=None):
+    print(f"   shape={df.shape} columns={list(df.columns[:8])}")
+
+    # Symbol이 인덱스인 경우 컬럼으로 전환
+    if df.index.name in ('Symbol', 'Code', 'Ticker'):
+        df = df.reset_index()
+
+    code_col = next((c for c in ['Symbol', 'Code', 'Ticker'] if c in df.columns), None)
+    name_col = next((c for c in ['Name', 'ISU_ABBRV', 'KorName'] if c in df.columns), None)
+
+    if not code_col or not name_col:
+        print(f"   컬럼 감지 실패: {list(df.columns)}")
+        return []
+
+    result = []
+    for _, row in df.iterrows():
+        try:
+            ticker = str(row[code_col]).strip()
+            name = str(row[name_col]).strip()
+            if not ticker or not name or ticker == 'nan' or name == 'nan':
+                continue
+            if len(ticker) != 6 or not ticker.isdigit():
+                continue
+            item = {"t": ticker, "n": name, "m": m_code}
+            if ty:
+                item["ty"] = ty
+            result.append(item)
+        except Exception:
+            continue
+    return result
+
+
+# ──────────────────────────────────────────
+#  1. 한국 주식 (FinanceDataReader — 우선주 포함)
 # ──────────────────────────────────────────
 def fetch_kr_stocks():
-    print("1. 한국 주식 수집 시작 (pykrx)...")
+    print("1. 한국 주식 수집 시작 (FinanceDataReader)...")
     try:
-        from pykrx import stock as krx
+        import FinanceDataReader as fdr
         stocks = []
         for market in ['KOSPI', 'KOSDAQ']:
             m_code = 'KS' if market == 'KOSPI' else 'KQ'
-            tickers = krx.get_market_ticker_list(market=market)
-            print(f"   {market}: {len(tickers)}개 ticker 수집")
-            for ticker in tickers:
-                try:
-                    name = krx.get_market_ticker_name(ticker)
-                    if name:
-                        stocks.append({"t": ticker, "n": name, "m": m_code})
-                except Exception:
-                    pass
+            df = fdr.StockListing(market)
+            items = _fdr_df_to_stocks(df, m_code)
+            print(f"   {market}: {len(items)}건")
+            stocks.extend(items)
         stocks = _dedup(stocks)
         print(f"   한국 주식 완료: {len(stocks)}건")
         return stocks
     except Exception as e:
-        print(f"   pykrx 실패: {e}")
+        print(f"   한국 주식 실패: {e}")
+        import traceback
+        traceback.print_exc()
         return []
 
 
 # ──────────────────────────────────────────
-#  2. 한국 ETF (pykrx)
+#  2. 한국 ETF (FinanceDataReader)
 # ──────────────────────────────────────────
 def fetch_kr_etfs():
-    print("2. 한국 ETF 수집 시작 (pykrx)...")
+    print("2. 한국 ETF 수집 시작 (FinanceDataReader)...")
     try:
-        from pykrx import stock as krx
-        etfs = []
-        tickers = krx.get_etf_ticker_list()
-        print(f"   ETF ticker {len(tickers)}개 수집")
-        for ticker in tickers:
+        import FinanceDataReader as fdr
+        for market_key in ['ETF/KR', 'KRX-ETF']:
             try:
-                name = krx.get_etf_ticker_name(ticker)
-                if name:
-                    etfs.append({"t": ticker, "n": name, "m": "KS", "ty": "E"})
-            except Exception:
-                pass
-        etfs = _dedup(etfs)
-        print(f"   한국 ETF 완료: {len(etfs)}건")
-        return etfs
+                df = fdr.StockListing(market_key)
+                if df.empty:
+                    continue
+                etfs = _fdr_df_to_stocks(df, 'KS', ty='E')
+                if etfs:
+                    etfs = _dedup(etfs)
+                    print(f"   한국 ETF 완료: {len(etfs)}건 (key={market_key})")
+                    return etfs
+            except Exception as e:
+                print(f"   ETF({market_key}) 실패: {e}")
+                continue
+        print("   한국 ETF: 0건")
+        return []
     except Exception as e:
-        print(f"   pykrx ETF 실패: {e}")
+        print(f"   한국 ETF 실패: {e}")
+        import traceback
+        traceback.print_exc()
         return []
 
 
