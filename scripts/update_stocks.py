@@ -57,7 +57,7 @@ def _fdr_df_to_stocks(df, m_code, ty=None):
             name = str(row[name_col]).strip()
             if not ticker or not name or ticker == 'nan' or name == 'nan':
                 continue
-            if len(ticker) != 6 or not ticker.isdigit():
+            if len(ticker) != 6 or not ticker.isalnum():
                 continue
             item = {"t": ticker, "n": name, "m": m_code}
             if ty:
