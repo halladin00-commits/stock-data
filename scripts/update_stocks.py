@@ -3,35 +3,22 @@
 GitHub Actions에서 매일 자동 실행됩니다.
 
 4개 소스:
-  1. 공공데이터포털 getItemInfo       → 한국 주식
-  2. 공공데이터포털 getETFPriceInfo   → 한국 ETF
-  3. dumbstockapi                     → 미국 주식
-  4. NASDAQ ETF screener              → 미국 ETF
+  1. pykrx (KRX 직접 조회)  → 한국 주식 (우선주 포함)
+  2. pykrx (KRX ETF 목록)   → 한국 ETF
+  3. dumbstockapi            → 미국 주식
+  4. NASDAQ ETF screener     → 미국 ETF
 
-필드: t=ticker, n=name, m=market(KS/KQ/US)
+필드: t=ticker, n=name, m=market(KS/KQ/US), ty=E(ETF만)
 """
 
 import json
 import os
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 
 OUTPUT_DIR = "docs"
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, "stocks.json")
 META_FILE = os.path.join(OUTPUT_DIR, "meta.json")
-
-DATA_GO_KR_API_KEY = os.environ.get("DATA_GO_KR_API_KEY", "")
-
-MAX_PAGES = 50   # getItemInfo의 totalCount가 매우 크므로 여유 있게
-PER_PAGE = 1000  # 한 번에 더 많이 받기
-
-
-def _strip_kr_prefix(code: str) -> str:
-    """한국 종목코드에서 'A' 접두사 제거"""
-    code = code.strip()
-    if code.startswith("A") and code[1:].isdigit():
-        return code[1:]
-    return code
 
 
 def _dedup(stocks, key="t"):
@@ -46,113 +33,56 @@ def _dedup(stocks, key="t"):
     return result
 
 
-def _fetch_datago_paged(base_url, extra_params=None, label=""):
-    """공공데이터포털 페이징 공통 로직"""
-    all_items = []
-    if not DATA_GO_KR_API_KEY:
-        print(f"  DATA_GO_KR_API_KEY 미설정. {label} 건너뜁니다.")
-        return all_items
-
-    for page in range(1, MAX_PAGES + 1):
-        params = {
-            "serviceKey": DATA_GO_KR_API_KEY,
-            "resultType": "json",
-            "numOfRows": PER_PAGE,
-            "pageNo": page,
-        }
-        if extra_params:
-            params.update(extra_params)
-
-        try:
-            resp = requests.get(base_url, params=params, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-
-            body = data.get("response", {}).get("body", {})
-            items = body.get("items", {}).get("item", [])
-            total_count = int(body.get("totalCount", 0))
-
-            if isinstance(items, dict):
-                items = [items]
-            if not items:
-                break
-
-            all_items.extend(items)
-            print(f"  {label} 페이지 {page}: {len(items)}건 (누적 {len(all_items)}/{total_count})")
-
-            if len(all_items) >= total_count or len(items) < PER_PAGE:
-                break
-        except Exception as e:
-            print(f"  {label} 페이지 {page} 실패: {e}")
-            break
-
-    return all_items
-
-
 # ──────────────────────────────────────────
-#  1. 한국 주식 (공공데이터포털 getItemInfo)
+#  1. 한국 주식 (pykrx — KRX 직접, 우선주 포함)
 # ──────────────────────────────────────────
 def fetch_kr_stocks():
-    print("1. 한국 주식 수집 시작...")
-    url = "https://apis.data.go.kr/1160100/service/GetKrxListedInfoService/getItemInfo"
-    raw = _fetch_datago_paged(url, label="KR주식")
-
-    stocks = []
-    for item in raw:
-        code = item.get("srtnCd", "")
-        name = item.get("itmsNm", "")
-        market = item.get("mrktCtg", "")
-
-        if not code or not name:
-            continue
-        if market == "KONEX":
-            continue
-
-        m = "KS" if market == "KOSPI" else "KQ"
-        t = _strip_kr_prefix(code)
-        stocks.append({"t": t, "n": name, "m": m})
-
-    stocks = _dedup(stocks)
-    print(f"   한국 주식 완료: {len(stocks)}건")
-    return stocks
+    print("1. 한국 주식 수집 시작 (pykrx)...")
+    try:
+        from pykrx import stock as krx
+        stocks = []
+        for market in ['KOSPI', 'KOSDAQ']:
+            m_code = 'KS' if market == 'KOSPI' else 'KQ'
+            tickers = krx.get_market_ticker_list(market=market)
+            print(f"   {market}: {len(tickers)}개 ticker 수집")
+            for ticker in tickers:
+                try:
+                    name = krx.get_market_ticker_name(ticker)
+                    if name:
+                        stocks.append({"t": ticker, "n": name, "m": m_code})
+                except Exception:
+                    pass
+        stocks = _dedup(stocks)
+        print(f"   한국 주식 완료: {len(stocks)}건")
+        return stocks
+    except Exception as e:
+        print(f"   pykrx 실패: {e}")
+        return []
 
 
 # ──────────────────────────────────────────
-#  2. 한국 ETF (공공데이터포털 getETFPriceInfo)
+#  2. 한국 ETF (pykrx)
 # ──────────────────────────────────────────
 def fetch_kr_etfs():
-    print("2. 한국 ETF 수집 시작...")
-
-    # 최근 영업일 찾기: 오늘부터 7일 전까지 시도
-    for days_ago in range(0, 8):
-        dt = datetime.utcnow() + timedelta(hours=9) - timedelta(days=days_ago)
-        bas_dt = dt.strftime("%Y%m%d")
-
-        url = "https://apis.data.go.kr/1160100/service/GetSecuritiesProductInfoService/getETFPriceInfo"
-        raw = _fetch_datago_paged(url, extra_params={"basDt": bas_dt}, label=f"KR-ETF({bas_dt})")
-
-        if len(raw) >= 100:
-            print(f"   기준일 {bas_dt} 사용")
-            break
-        elif len(raw) > 0:
-            print(f"   {bas_dt}: {len(raw)}건 (너무 적음, 이전 날짜 시도)")
-        else:
-            print(f"   {bas_dt}: 0건 (휴일?, 이전 날짜 시도)")
-
-    etfs = []
-    for item in raw:
-        code = item.get("srtnCd", "")
-        name = item.get("itmsNm", "")
-
-        if not code or not name:
-            continue
-
-        t = _strip_kr_prefix(code)
-        etfs.append({"t": t, "n": name, "m": "KS"})
-
-    etfs = _dedup(etfs)
-    print(f"   한국 ETF 완료: {len(etfs)}건")
-    return etfs
+    print("2. 한국 ETF 수집 시작 (pykrx)...")
+    try:
+        from pykrx import stock as krx
+        etfs = []
+        tickers = krx.get_etf_ticker_list()
+        print(f"   ETF ticker {len(tickers)}개 수집")
+        for ticker in tickers:
+            try:
+                name = krx.get_etf_ticker_name(ticker)
+                if name:
+                    etfs.append({"t": ticker, "n": name, "m": "KS", "ty": "E"})
+            except Exception:
+                pass
+        etfs = _dedup(etfs)
+        print(f"   한국 ETF 완료: {len(etfs)}건")
+        return etfs
+    except Exception as e:
+        print(f"   pykrx ETF 실패: {e}")
+        return []
 
 
 # ──────────────────────────────────────────
