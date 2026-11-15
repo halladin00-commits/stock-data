@@ -5,7 +5,7 @@ GitHub Actions에서 매일 자동 실행됩니다.
 4개 소스:
   1. FinanceDataReader       → 한국 주식 (우선주 포함)
   2. FinanceDataReader       → 한국 ETF
-  3. dumbstockapi            → 미국 주식
+  3. NASDAQ stock screener   → 미국 주식 (NYSE·NASDAQ·AMEX)
   4. NASDAQ ETF screener     → 미국 ETF
 
 필드: t=ticker, n=name, m=market(KS/KQ/US), ty=E(ETF만)
@@ -13,6 +13,8 @@ GitHub Actions에서 매일 자동 실행됩니다.
 
 import json
 import os
+import re
+import sys
 import requests
 from datetime import datetime
 
@@ -122,27 +124,55 @@ def fetch_kr_etfs():
 
 
 # ──────────────────────────────────────────
-#  3. 미국 주식 (dumbstockapi)
+#  3. 미국 주식 (NASDAQ stock screener — NYSE·NASDAQ·AMEX)
 # ──────────────────────────────────────────
+# 이름 끝의 「Common Stock」 따위는 종목 종류지 이름이 아니다 — 뗀다.
+# 「Class A」는 남긴다 (GOOGL과 GOOG를 가른다).
+_US_NAME_TAIL = re.compile(
+    r"\s+(Common Stock|Common Shares?|Ordinary Shares?|Capital Stock)"
+    r"(\s*\([^)]*\))?$",
+    re.IGNORECASE,
+)
+# 워런트·유닛·권리는 주식이 아니다
+_US_NOT_STOCK = re.compile(r"\b(Warrants?|Units?|Rights?)$", re.IGNORECASE)
+
+
+def _us_stock_rows(rows):
+    """NASDAQ screener 줄 → 종목 리스트. 시험할 수 있게 받아 오는 일과 나눴다."""
+    stocks = []
+    for row in rows:
+        symbol = (row.get("symbol") or "").strip()
+        name = (row.get("name") or "").strip()
+        if not symbol or not name:
+            continue
+        # BRK/B → BRK-B (시세를 받는 Yahoo의 표기)
+        symbol = symbol.replace("/", "-")
+        # ^는 우선주 시리즈, 그 밖의 기호는 시세를 못 받는다
+        if not re.fullmatch(r"[A-Z]+(-[A-Z])?", symbol):
+            continue
+        if _US_NOT_STOCK.search(name):
+            continue
+        name = _US_NAME_TAIL.sub("", name).strip()
+        if not name:
+            continue
+        stocks.append({"t": symbol, "n": name, "m": "US"})
+    return _dedup(stocks)
+
+
 def fetch_us_stocks():
     print("3. 미국 주식 수집 시작...")
-    stocks = []
     try:
-        url = "https://dumbstockapi.com/stock?exchanges=NYSE,NASDAQ&format=json"
-        resp = requests.get(url, timeout=60)
+        url = "https://api.nasdaq.com/api/screener/stocks?tableonly=true&download=true"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        resp = requests.get(url, headers=headers, timeout=60)
         resp.raise_for_status()
-        for item in resp.json():
-            ticker = item.get("ticker", "")
-            name = item.get("name", "")
-            if not ticker or not name:
-                continue
-            if any(c in ticker for c in [".", "-", "^", "/"]):
-                continue
-            stocks.append({"t": ticker, "n": name.strip(), "m": "US"})
+        rows = (resp.json().get("data") or {}).get("rows") or []
+        stocks = _us_stock_rows(rows)
         print(f"   미국 주식 완료: {len(stocks)}건")
+        return stocks
     except Exception as e:
         print(f"   미국 주식 실패: {e}")
-    return stocks
+        return []
 
 
 # ──────────────────────────────────────────
@@ -195,9 +225,20 @@ def main():
     print(f"  US ETF:  {len(us_etfs)}  {'✓' if len(us_etfs) >= 100 else '⚠ 부족!'}")
     print(f"{'='*50}")
 
-    if len(all_data) == 0:
-        print("데이터가 없습니다. 파일을 생성하지 않습니다.")
-        return
+    # 한 곳이라도 모자라면 어제 파일을 그대로 둔다. 예전에는 받아 오는 곳이
+    # 죽어도 나머지만으로 덮어써서, 미국 주식이 통째로 빠진 목록이 몇 달 동안
+    # 앱으로 나갔다. 실패로 끝내야 GitHub이 메일로 알린다.
+    short = [
+        name for name, got, need in [
+            ("KR 주식", len(kr_stocks), 2000),
+            ("KR ETF", len(kr_etfs), 100),
+            ("US 주식", len(us_stocks), 3000),
+            ("US ETF", len(us_etfs), 100),
+        ] if got < need
+    ]
+    if short:
+        print(f"모자란 곳: {', '.join(short)} — 파일을 바꾸지 않습니다.")
+        sys.exit(1)
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(all_data, f, ensure_ascii=False, separators=(",", ":"))
