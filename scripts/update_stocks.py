@@ -7,8 +7,10 @@ GitHub Actions에서 매일 자동 실행됩니다.
   2. FinanceDataReader       → 한국 ETF
   3. NASDAQ stock screener   → 미국 주식 (NYSE·NASDAQ·AMEX)
   4. NASDAQ ETF screener     → 미국 ETF
+  5. Wikidata                → 미국 종목의 한글 이름
 
-필드: t=ticker, n=name, m=market(KS/KQ/US), ty=E(ETF만)
+필드: t=ticker, n=name, m=market(KS/KQ/US), ty=E(ETF만),
+      k=한글 이름들(미국 종목 일부만, 「|」로 나눔)
 """
 
 import json
@@ -203,6 +205,91 @@ def fetch_us_etfs():
 
 
 # ──────────────────────────────────────────
+#  5. 미국 종목의 한글 이름 (Wikidata — CC0, 누구나 쓸 수 있다)
+# ──────────────────────────────────────────
+# 「애플」로 AAPL을 찾게 한다. 증권사가 나눠 주는 목록이 훨씬 많지만(6천 개)
+# 이용 조건이 그 증권사 고객용이라 쓰지 않는다.
+_WIKIDATA_QUERY = """
+SELECT ?c ?t ?en ?ko ?alt WHERE {
+  ?c p:P414 ?s. ?s ps:P414 ?ex; pq:P249 ?t.
+  VALUES ?ex { wd:Q13677 wd:Q82059 wd:Q846626 }
+  FILTER NOT EXISTS { ?s pq:P582 ?ended }
+  ?c rdfs:label ?ko. FILTER(LANG(?ko)="ko")
+  OPTIONAL { ?c rdfs:label ?en. FILTER(LANG(?en)="en") }
+  OPTIONAL { ?c skos:altLabel ?alt. FILTER(LANG(?alt)="ko") }
+}
+"""
+
+_HANGUL = re.compile(r"[가-힣]")
+
+
+def _first_word(name):
+    """회사 이름의 첫 낱말 — 「Apple Inc.」와 「Apple」을 같은 회사로 본다."""
+    words = re.findall(r"[a-z0-9]+", (name or "").lower())
+    words = [w for w in words if w != "the"]
+    return words[0] if words else ""
+
+
+def _korean_names(rows, us_names):
+    """Wikidata 줄 → {티커: [한글 이름…]}.
+
+    같은 티커를 예전에 쓰던 회사가 섞여 있다(S = 스프린트·시어스·센티넬원).
+    영문 이름의 첫 낱말이 우리 목록의 그 티커와 같은 회사만 받는다 —
+    딱 한 회사로 좁혀지지 않으면 그 티커에는 한글 이름을 붙이지 않는다.
+    """
+    by_ticker = {}
+    for r in rows:
+        t = (r.get("t") or "").strip().upper().replace(".", "-")
+        if t not in us_names:
+            continue
+        if _first_word(r.get("en")) != _first_word(us_names[t]):
+            continue
+        names = by_ticker.setdefault(t, {}).setdefault(r["c"], [])
+        for n in (r.get("ko"), r.get("alt")):
+            n = (n or "").strip()
+            # 「페이스북 (회사)」 같은 위키 표제어 꼬리는 이름이 아니다
+            n = re.sub(r"\s*\([^)]*\)$", "", n)
+            if n and _HANGUL.search(n) and n not in names:
+                names.append(n)
+    return {
+        t: next(iter(cs.values()))
+        for t, cs in by_ticker.items()
+        if len(cs) == 1 and next(iter(cs.values()))
+    }
+
+
+def fetch_us_korean_names(us_names):
+    print("5. 미국 종목 한글 이름 수집 시작 (Wikidata)...")
+    try:
+        resp = requests.get(
+            "https://query.wikidata.org/sparql",
+            params={"query": _WIKIDATA_QUERY, "format": "json"},
+            headers={"User-Agent": "stock-list-builder/1.0 (GitHub Actions)"},
+            timeout=120,
+        )
+        resp.raise_for_status()
+        rows = [
+            {k: v["value"] for k, v in b.items()}
+            for b in resp.json()["results"]["bindings"]
+        ]
+        names = _korean_names(rows, us_names)
+        print(f"   한글 이름 완료: {len(names)}건")
+        return names
+    except Exception as e:
+        print(f"   한글 이름 실패: {e}")
+        return None
+
+
+def _previous_korean_names():
+    """Wikidata가 안 될 때 — 어제 파일에 붙어 있던 이름을 그대로 쓴다."""
+    try:
+        with open(OUTPUT_FILE, encoding="utf-8") as f:
+            return {s["t"]: s["k"] for s in json.load(f) if s.get("k")}
+    except Exception:
+        return {}
+
+
+# ──────────────────────────────────────────
 #  메인
 # ──────────────────────────────────────────
 def main():
@@ -240,6 +327,16 @@ def main():
         print(f"모자란 곳: {', '.join(short)} — 파일을 바꾸지 않습니다.")
         sys.exit(1)
 
+    # 한글 이름은 있으면 좋은 것이다 — 못 받아도 목록은 내보낸다
+    us_names = {s["t"]: s["n"] for s in all_data if s["m"] == "US"}
+    ko = fetch_us_korean_names(us_names)
+    if ko is None:
+        ko = {t: k.split("|") for t, k in _previous_korean_names().items()}
+        print(f"   어제 파일의 한글 이름을 씁니다: {len(ko)}건")
+    for s in all_data:
+        if s["m"] == "US" and ko.get(s["t"]):
+            s["k"] = "|".join(ko[s["t"]])
+
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(all_data, f, ensure_ascii=False, separators=(",", ":"))
 
@@ -251,6 +348,7 @@ def main():
         "kr_etf_count": len(kr_etfs),
         "us_stock_count": len(us_stocks),
         "us_etf_count": len(us_etfs),
+        "us_korean_name_count": sum(1 for s in all_data if s.get("k")),
         "total_count": len(all_data),
         "file_size": file_size,
     }
